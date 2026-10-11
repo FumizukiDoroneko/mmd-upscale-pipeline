@@ -1,5 +1,6 @@
 ---
 name: mmd-upscale-pipeline
+license: MIT
 description: >-
   Resample and frame-interpolate MMD and other anime/CG videos to a target
   resolution and frame rate on a local ComfyUI + ffmpeg stack (RIFE interpolation

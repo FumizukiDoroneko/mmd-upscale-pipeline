@@ -47,9 +47,13 @@
   Interpolating is cheap either way (60 frames in ~1.5 s); the restore stage is
   what costs hours, which is why it is now opt-in.
 
-  ComfyUI must already be running - start it with scripts/start_comfyui.bat,
-  which sets PYTHONUTF8=1. The system locale is GBK and the node packs log emoji
-  at import, so launching without it crashes ComfyUI outright.
+  ComfyUI must already be running - start it with scripts/launch-comfyui.ps1,
+  which sets PYTHONUTF8=1. On a Windows install whose ANSI code page is not UTF-8,
+  the node packs log emoji at import and abort ComfyUI outright without it.
+
+  No install path is hardcoded: the ComfyUI location and its input/output folders
+  come from scripts/comfy-env.ps1, and the interpolation segment size is derived
+  from the detected VRAM and the clip's real frame size.
 
 .EXAMPLE
   # the recommended job: 1440p60, no AI, sharpened
@@ -109,10 +113,11 @@ param(
     # Frames per restore segment. Ignored when the clip is shorter.
     [int]$SegmentFrames = 30,
 
-    # Frames per interpolation segment. Lower than SegmentFrames on purpose:
-    # RIFE materialises both the input and the interpolated output at once, so at
-    # 4K it needs roughly 3x the frame count in bytes.
-    [int]$InterpSegmentFrames = 24,
+    # Frames per interpolation segment. 0 (the default) derives it from real VRAM
+    # and the actual frame size - RIFE materialises the input and the interpolated
+    # output at once, so a 4K clip needs far smaller segments than a 1080p one.
+    # Set a positive value to override.
+    [int]$InterpSegmentFrames = 0,
 
     # h264 (libx264) is the default: encoding is NOT the bottleneck here, and on
     # this build VHS's 'video/nvenc_h264-mp4' path dies with `OSError: [Errno 22]`
@@ -159,8 +164,11 @@ param(
     [string]$RifeModel = 'rife_v4.26.safetensors',
 
     [string]$ComfyUrl = 'http://127.0.0.1:8188',
-    [string]$ComfyInput = 'D:\ComfyUI\ComfyUI\input',
-    [string]$ComfyOutput = 'D:\ComfyUI\ComfyUI\output',
+    # Left empty on purpose: both are discovered from the ComfyUI install found on
+    # this machine (see scripts/comfy-env.ps1). Pass them only to override, e.g.
+    # when the server runs with a custom --base-directory.
+    [string]$ComfyInput = '',
+    [string]$ComfyOutput = '',
 
     [string[]]$Extensions = @('.mp4', '.mkv', '.mov', '.avi', '.webm'),
 
@@ -170,6 +178,8 @@ param(
     # Keep the per-segment files and the restored intermediate for inspection.
     [switch]$KeepIntermediate
 )
+
+. (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'comfy-env.ps1')
 
 $ErrorActionPreference = 'Stop'
 
@@ -629,8 +639,23 @@ function Invoke-InterpPass {
 
 # ------------------------------------------------------------------ preflight
 
+# Read the machine instead of assuming it. Ports and VRAM come from the probe so
+# the script behaves the same on a different machine with different hardware.
+$comfyLayout = Find-ComfyLayout
+if (-not $ComfyInput -or -not $ComfyOutput) {
+    if (-not $comfyLayout) {
+        throw ("No ComfyUI install found, so the input/output folders are unknown. " +
+               "Pass -ComfyInput and -ComfyOutput explicitly, or run scripts/probe-env.ps1 " +
+               "to see what this machine has.")
+    }
+    if (-not $ComfyInput) { $ComfyInput = $comfyLayout.InputDir }
+    if (-not $ComfyOutput) { $ComfyOutput = $comfyLayout.OutputDir }
+}
+
+$gpuInfo = Get-GpuInfo
+
 try { Invoke-RestMethod -Uri "$ComfyUrl/system_stats" -TimeoutSec 15 | Out-Null }
-catch { throw "ComfyUI is not answering at $ComfyUrl. Start it with scripts/start_comfyui.bat first." }
+catch { throw "ComfyUI is not answering at $ComfyUrl. Start it with scripts/launch-comfyui.ps1 first." }
 
 if (-not (Test-Path -LiteralPath $InputDir)) { throw "InputDir not found: $InputDir" }
 if (-not (Test-Path -LiteralPath $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
@@ -642,14 +667,31 @@ if ($videos.Count -eq 0) { Write-Step "No videos found in $InputDir"; return }
 $doRestore = $Mode -in @('both', 'upscale')
 $doInterp = $Mode -in @('both', 'interp')
 $minRestoreFrames = if ($Restore -eq 'flashvsr') { 21 } else { 5 }
+$aiRestoreWanted = $doRestore -and $Restore -ne 'none'
 
 Write-Step ("Mode={0}  restore={1}  target_short_edge={2}  multiplier={3}x  encode={4}" -f `
     $Mode, $(if ($doRestore) { $Restore } else { 'skipped' }), `
     $(if ($doRestore) { $TargetShortEdge } else { 'n/a' }), `
     $(if ($doInterp) { $Multiplier } else { '1' }), $Encode)
 Write-Step ("sharpen={0}  intermediate_crf={1}  audio_offset={2}ms" -f $Sharpen, $IntermediateCrf, $AudioOffsetMs)
-Write-Step ("segments: restore {0} frames, interp {1} frames  |  clips: {2}" -f `
-    $SegmentFrames, $InterpSegmentFrames, $videos.Count)
+Write-Step ("segments: restore {0} frames, interp {1}  |  clips: {2}" -f `
+    $SegmentFrames, $(if ($InterpSegmentFrames -gt 0) { "$InterpSegmentFrames frames" } else { 'auto from VRAM' }), $videos.Count)
+
+Write-Step ("machine: ComfyUI={0}  input={1}" -f $comfyLayout.CodeDir, $ComfyInput)
+if ($gpuInfo) {
+    Write-Step ("         GPU={0} ({1} GB)  free now {2} GB" -f $gpuInfo.Name,
+        [math]::Round($gpuInfo.TotalMB / 1024, 1), [math]::Round($gpuInfo.FreeMB / 1024, 1))
+}
+else { Write-Step '         GPU: nvidia-smi unavailable, VRAM unknown - conservative defaults in use' }
+
+# Warn rather than silently rewrite the user's requested parameters. The only
+# thing the script chooses on its own is the interpolation segment size above.
+if ($aiRestoreWanted -and $gpuInfo -and $gpuInfo.TotalMB -le 12288 -and $TargetShortEdge -gt 1440) {
+    Write-Step '         WARNING: AI restore to above 1440p on a 12GB-or-smaller card was' 
+    Write-Step '                  measured to thrash (VRAM pegged, GPU ~100% at ~60W). Expect' 
+    Write-Step '                  it to be very slow; -Restore none is the recommended path for' 
+    Write-Step '                  a clean source.'
+}
 
 $ok = 0; $failed = 0
 
@@ -727,7 +769,16 @@ foreach ($video in $videos) {
 
             # Overlap each segment by one frame so the join is seamless: the first
             # frame of every later segment duplicates the previous segment's last.
-            $base = @(Get-Segments -Total $interpTotal -Target $InterpSegmentFrames -MinFrames 2)
+            $segTarget = $InterpSegmentFrames
+            if ($segTarget -le 0) {
+                $idims = Get-VideoDims $currentPath
+                $segTarget = Get-AutoInterpSegmentFrames -FrameWidth $idims.Width -FrameHeight $idims.Height `
+                    -VramTotalMB $(if ($gpuInfo) { $gpuInfo.TotalMB } else { 0 })
+                Write-Step ("  auto segment size: {0} frames (from {1}x{2} on {3})" -f $segTarget,
+                    $idims.Width, $idims.Height,
+                    $(if ($gpuInfo) { "$([math]::Round($gpuInfo.TotalMB / 1024, 1)) GB VRAM" } else { 'unknown VRAM' }))
+            }
+            $base = @(Get-Segments -Total $interpTotal -Target $segTarget -MinFrames 2)
             $segments = @()
             for ($i = 0; $i -lt $base.Count; $i++) {
                 if ($i -eq 0) { $segments += $base[$i] }

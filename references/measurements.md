@@ -126,8 +126,10 @@ would be below the minimum. Only longer clips actually get ~24-frame segments.
 
 ## Network notes (these cost real time to rediscover)
 
-- HuggingFace is unreachable directly here (0 MB/s). `hf-mirror.com` works well and
-  is pinned via `HF_ENDPOINT` in `scripts/start_comfyui.bat`.
+- HuggingFace is unreachable directly from this network (0 MB/s). `hf-mirror.com`
+  works well: pass it to the launcher (`.\scripts\launch-comfyui.ps1 -HfEndpoint
+  https://hf-mirror.com`), which exports it as `HF_ENDPOINT` for the node packs.
+  This is network-specific, so it is a flag rather than a default.
 - GitHub release downloads are ~0 MB/s directly. `https://gh-proxy.com/<github-url>`
   measured 24.8 MB/s; the system proxy at `127.0.0.1:7890` only gave 2.2 MB/s for
   the same file, so prefer the mirror.

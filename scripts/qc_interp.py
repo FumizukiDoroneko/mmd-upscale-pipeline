@@ -18,8 +18,10 @@ Interpreting the ratio (interpolated detail / original detail):
     <  0.95   the pulsing will be visible; consider fewer interpolated frames,
               a different model, or re-rendering the source at the target fps
 
-Note: it needs an ffmpeg/ffprobe on PATH and Pillow + numpy. On this machine the
-embedded interpreter works: D:\\ComfyUI\\python_embeded\\python.exe
+Needs ffmpeg/ffprobe on PATH plus Pillow and numpy. Run it with the interpreter
+that ships alongside ComfyUI - scripts/probe-env.ps1 prints the exact path, and a
+portable install keeps it at <root>\\python_embeded\\python.exe. A bare system
+Python usually lacks Pillow/numpy.
 """
 import subprocess
 import sys

@@ -1,0 +1,4 @@
+# Keep the exact bytes. These files were authored with LF endings and the repo is
+# single-machine; letting git rewrite line endings would show every file as
+# modified on the next checkout for no benefit.
+* -text

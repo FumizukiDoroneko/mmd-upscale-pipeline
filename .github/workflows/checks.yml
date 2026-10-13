@@ -1,0 +1,74 @@
+name: checks
+
+# Cheap structural checks that catch the two ways this repo can rot: a PowerShell
+# script that no longer parses, or a SKILL.md whose frontmatter stops matching the
+# folder it lives in. The scripts themselves need a GPU and a ComfyUI install, so
+# they cannot be exercised here - only parsed.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "FAIL $($_.Name)"
+              $errors | ForEach-Object { Write-Host "  $($_.Message)" }
+              $failed = $true
+            } else {
+              Write-Host "ok   $($_.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Python compiles
+        shell: pwsh
+        run: |
+          python -m py_compile scripts/qc_interp.py
+          Write-Host "ok   scripts/qc_interp.py"
+
+      - name: SKILL.md frontmatter matches the folder
+        shell: pwsh
+        run: |
+          $skill = Get-Content SKILL.md -Raw
+          if ($skill -notmatch '(?m)^---\s*$') {
+            throw 'SKILL.md: missing YAML frontmatter'
+          }
+          if ($skill -notmatch '(?m)^name:\s*mmd-upscale-pipeline\s*$') {
+            throw 'SKILL.md: name must match the folder name (mmd-upscale-pipeline)'
+          }
+          if ($skill -notmatch '(?m)^description:') {
+            throw 'SKILL.md: missing description'
+          }
+          if ($skill -match 'TODO|FIXME|PLACEHOLDER') {
+            throw 'SKILL.md: contains an unfinished placeholder'
+          }
+          Write-Host 'ok   SKILL.md'
+
+      - name: Referenced files exist
+        shell: pwsh
+        run: |
+          $required = @(
+            'README.md', 'LICENSE',
+            'references/measurements.md',
+            'scripts/comfy-env.ps1',
+            'scripts/launch-comfyui.ps1',
+            'scripts/mmd_upscale_batch.ps1',
+            'scripts/probe-env.ps1',
+            'scripts/qc_interp.py'
+          )
+          $missing = $required | Where-Object { -not (Test-Path $_) }
+          if ($missing) { throw "missing files: $($missing -join ', ')" }
+          Write-Host "ok   $($required.Count) referenced files present"

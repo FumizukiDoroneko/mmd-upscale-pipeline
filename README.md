@@ -19,6 +19,16 @@ it genuinely helps.
 | **Raise frame rate** (30 → 60fps) | RIFE interpolation, in frame-exact segments | — |
 | **Both at once** | Restore stage (if any) first, then interpolate, then resample | — |
 
+```mermaid
+flowchart TB
+    A[clip] --> Q{source quality}
+    Q -->|clean render — the default| I[interpolate at native resolution<br/>RIFE, frame-exact segments]
+    Q -->|degraded source only| R[restore and upscale<br/>FlashVSR or SeedVR2]
+    R --> I
+    I --> S[resample to the target<br/>Lanczos plus optional unsharp]
+    S --> M[mux the original audio]
+```
+
 It drives a local **ComfyUI** install for the model stages and **ffmpeg** for
 assembly, discovers both instead of assuming where they live, and reports what a
 machine can actually do before starting a long job.

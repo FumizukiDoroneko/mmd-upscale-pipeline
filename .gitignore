@@ -2,6 +2,13 @@
 __pycache__/
 *.pyc
 
-# Job scratch must never land in the skill repo. Video renders, staged inputs and
-# QC frames belong in a work folder outside these files:
-#   work/, out/, *.mkv, *.mp4, *.png
+# Job scratch, for the case where someone runs the scripts from inside the
+# checkout: source copies, outputs and QC frames must never be committed.
+work/
+out/
+_work/
+*.mkv
+*.mp4
+*.mov
+*.avi
+*.webm

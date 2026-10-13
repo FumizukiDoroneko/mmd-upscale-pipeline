@@ -61,7 +61,7 @@ jobs:
         shell: pwsh
         run: |
           $required = @(
-            'README.md', 'LICENSE',
+            'README.md', 'README.zh-CN.md', 'LICENSE',
             'references/measurements.md',
             'scripts/comfy-env.ps1',
             'scripts/launch-comfyui.ps1',

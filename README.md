@@ -1,5 +1,7 @@
 # mmd-upscale-pipeline
 
+**English** · [中文](README.zh-CN.md)
+
 An agent skill that resamples and frame-interpolates **MMD and other anime/CG
 video** on a local workstation — no cloud service, no per-use cost.
 
